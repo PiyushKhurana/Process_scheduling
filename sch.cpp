@@ -1,158 +1,165 @@
 #include <iostream>
 #include <vector>
-#include <algorithm>
 #include <queue>
-#include <iomanip>
+#include <algorithm>
 
-// Abstract base class for Process
+using namespace std;
+
 class Process {
 public:
-    int processID;   // Process ID
-    int burstTime;   // Burst time (CPU time required)
-    int arrivalTime; // Arrival time
-    int priority;    // Priority for scheduling algorithms (if applicable)
-    int waitingTime; // Waiting time
-    int turnaroundTime; // Turnaround time
+    int processID;
+    int burstTime;
+    int arrivalTime;
+    int priority;
+    int waitingTime;
+    int turnaroundTime;
 
-    Process(int pid, int bt, int at, int pr = 0) : processID(pid), burstTime(bt), arrivalTime(at), priority(pr), waitingTime(0), turnaroundTime(0) {}
-    
-    virtual ~Process() = default;
-    
-    virtual void schedule(std::vector<Process*>& readyQueue) = 0; // Abstract method to schedule the process
+    Process(int pid, int bt, int at, int pr = 0)
+        : processID(pid), burstTime(bt), arrivalTime(at), priority(pr), waitingTime(0), turnaroundTime(0) {}
 };
 
-// FCFS Scheduling (First-Come-First-Served) Algorithm
-class FCFS : public Process {
+class Scheduler {
 public:
-    FCFS(int pid, int bt, int at) : Process(pid, bt, at) {}
+    virtual void schedule(vector<Process*>& processes) = 0;
     
-    void schedule(std::vector<Process*>& readyQueue) override {
+
+    static void calculateAvgTimes(const vector<Process*>& processes) {
+        double totalWaitingTime = 0, totalTurnaroundTime = 0;
+        for (const auto& p : processes) {
+            totalWaitingTime += p->waitingTime;
+            totalTurnaroundTime += p->turnaroundTime;
+        }
+        cout << "Average Waiting Time: " << totalWaitingTime / processes.size() << "\n";
+        cout << "Average Turnaround Time: " << totalTurnaroundTime / processes.size() << "\n";
+    }
+};
+
+class FCFS : public Scheduler {
+public:
+    void schedule(vector<Process*>& processes)  {
+        sort(processes.begin(), processes.end(), compareArrivalTime);
         int currentTime = 0;
-        
-        for (auto& p : readyQueue) {
-            if (currentTime < p->arrivalTime) {
-                currentTime = p->arrivalTime;
-            }
+        for (auto& p : processes) {
+            currentTime = max(currentTime, p->arrivalTime);
             p->waitingTime = currentTime - p->arrivalTime;
             p->turnaroundTime = p->waitingTime + p->burstTime;
             currentTime += p->burstTime;
         }
     }
+
+    static bool compareArrivalTime(Process* a, Process* b) {
+        return a->arrivalTime < b->arrivalTime;
+    }
 };
 
-// Round Robin Scheduling Algorithm
-class RoundRobin : public Process {
+class RoundRobin : public Scheduler {
 public:
-    int quantumTime; // Time quantum for Round Robin
-    
-    RoundRobin(int pid, int bt, int at, int qt) : Process(pid, bt, at), quantumTime(qt) {}
-    
-    void schedule(std::vector<Process*>& readyQueue) override {
-        int currentTime = 0;
-        std::queue<Process*> processQueue;
-        
-        // Initialize the queue with processes
-        for (auto& p : readyQueue) {
-            processQueue.push(p);
-        }
-        
-        while (!processQueue.empty()) {
-            Process* currentProcess = processQueue.front();
-            processQueue.pop();
-            
-            if (currentProcess->burstTime > quantumTime) {
-                currentProcess->burstTime -= quantumTime;
-                currentTime += quantumTime;
-                processQueue.push(currentProcess);
+    int quantumTime;
+     RoundRobin(int qt) : quantumTime(qt) {}
+
+    void schedule(vector<Process*>& processes)  {
+        queue<Process*> processQueue;
+        vector<int> remainingTime(processes.size());
+        int currentTime = 0, index = 0;
+
+        // Sort processes by arrival time
+        sort(processes.begin(), processes.end(), compareArrivalTime);
+
+        while (index < processes.size() || !processQueue.empty()) {
+            // Add processes to queue if they have arrived
+            while (index < processes.size() && processes[index]->arrivalTime <= currentTime) {
+                processQueue.push(processes[index]);
+                index++;
+            }
+
+            if (!processQueue.empty()) {
+                Process* currentProcess = processQueue.front();
+                processQueue.pop();
+                int processIndex = currentProcess->processID - 1;
+
+                if (remainingTime[processIndex] > quantumTime) {
+                    currentTime += quantumTime;
+                    remainingTime[processIndex] -= quantumTime;
+                    processQueue.push(currentProcess);
+                } else {
+                    currentTime += remainingTime[processIndex];
+                    currentProcess->waitingTime = currentTime - currentProcess->arrivalTime - currentProcess->burstTime;
+                    currentProcess->turnaroundTime = currentTime - currentProcess->arrivalTime;
+                    remainingTime[processIndex] = 0;
+                }
             } else {
-                currentTime += currentProcess->burstTime;
-                currentProcess->waitingTime = currentTime - currentProcess->arrivalTime - currentProcess->burstTime;
-                currentProcess->turnaroundTime = currentTime - currentProcess->arrivalTime;
-                currentProcess->burstTime = 0;
+                // Jump to the next process arrival if no process is available
+                currentTime = processes[index]->arrivalTime;
             }
         }
     }
+
+    static bool compareArrivalTime(Process* a, Process* b) {
+        return a->arrivalTime < b->arrivalTime;
+    }
 };
 
-// Shortest Job Next Scheduling Algorithm
-class ShortestJobNext : public Process {
+
+class ShortestJobNext : public Scheduler {
 public:
-    ShortestJobNext(int pid, int bt, int at) : Process(pid, bt, at) {}
-    
-    void schedule(std::vector<Process*>& readyQueue) override {
-        int currentTime = 0;
+    void schedule(vector<Process*>& processes)  {
+        priority_queue<Process*, vector<Process*>, CompareBurstTime> pq;
         
-        // Sort the readyQueue based on burstTime (Shortest Job First)
-        std::sort(readyQueue.begin(), readyQueue.end(), [](Process* a, Process* b) {
-            return a->burstTime < b->burstTime;
-        });
+        sort(processes.begin(), processes.end(), compareArrivalTime);
         
-        for (auto& p : readyQueue) {
-            if (currentTime < p->arrivalTime) {
-                currentTime = p->arrivalTime;
+        int currentTime = 0, index = 0;
+        while (index < processes.size() || !pq.empty()) {
+            while (index < processes.size() && processes[index]->arrivalTime <= currentTime) {
+                pq.push(processes[index]);
+                index++;
             }
-            p->waitingTime = currentTime - p->arrivalTime;
-            p->turnaroundTime = p->waitingTime + p->burstTime;
-            currentTime += p->burstTime;
+            if (!pq.empty()) {
+                Process* p = pq.top(); pq.pop();
+                p->waitingTime = currentTime - p->arrivalTime;
+                p->turnaroundTime = p->waitingTime + p->burstTime;
+                currentTime += p->burstTime;
+            } else {
+                currentTime = processes[index]->arrivalTime;
+            }
         }
     }
-};
 
-// Function to calculate and display average waiting and turnaround times
-void calculateAvgTimes(const std::vector<Process*>& processes) {
-    double totalWaitingTime = 0, totalTurnaroundTime = 0;
-    for (const auto& p : processes) {
-        totalWaitingTime += p->waitingTime;
-        totalTurnaroundTime += p->turnaroundTime;
+    struct CompareBurstTime {
+        bool operator()(Process* a, Process* b) {
+            return a->burstTime > b->burstTime;
+        }
+    };
+
+    static bool compareArrivalTime(Process* a, Process* b) {
+        return a->arrivalTime < b->arrivalTime;
     }
-    
-    std::cout << "Average Waiting Time: " << std::fixed << std::setprecision(2) << totalWaitingTime / processes.size() << std::endl;
-    std::cout << "Average Turnaround Time: " << std::fixed << std::setprecision(2) << totalTurnaroundTime / processes.size() << std::endl;
-}
+};
 
 int main() {
-    std::vector<Process*> processes;
-    
-    // Creating a few processes (Process ID, Burst Time, Arrival Time, [Priority])
-    processes.push_back(new FCFS(1, 6, 0));
-    processes.push_back(new FCFS(2, 8, 1));
-    processes.push_back(new FCFS(3, 7, 2));
-    processes.push_back(new FCFS(4, 3, 3));
-    
-    // Scheduling algorithms
-    FCFS fcfs(0, 0, 0);  // We use FCFS as a scheduling algorithm
-    fcfs.schedule(processes);
-    std::cout << "FCFS Scheduling:\n";
-    calculateAvgTimes(processes);
+    vector<Process*> processes = {
+        new Process(1, 6, 0),
+        new Process(2, 8, 1),
+        new Process(3, 7, 2),
+        new Process(4, 3, 3)
+    };
 
-    // Resetting burst time for the processes for other algorithms
-    processes[0]->burstTime = 6;
-    processes[1]->burstTime = 8;
-    processes[2]->burstTime = 7;
-    processes[3]->burstTime = 3;
-    
-    // Round Robin Scheduling (time quantum = 4)
-    RoundRobin rr(0, 0, 0, 4);
-    rr.schedule(processes);
-    std::cout << "\nRound Robin Scheduling:\n";
-    calculateAvgTimes(processes);
+    FCFS fcfsScheduler;
+    fcfsScheduler.schedule(processes);
+    cout << "FCFS Scheduling:\n";
+    Scheduler::calculateAvgTimes(processes);
 
-    // Resetting burst time for the processes for other algorithms
-    processes[0]->burstTime = 6;
-    processes[1]->burstTime = 8;
-    processes[2]->burstTime = 7;
-    processes[3]->burstTime = 3;
+    for (auto& p : processes) p->waitingTime = p->turnaroundTime = 0;
+    RoundRobin rrScheduler(4);
+    rrScheduler.schedule(processes);
+    cout << "\nRound Robin Scheduling:\n";
+    Scheduler::calculateAvgTimes(processes);
 
-    // Shortest Job Next Scheduling
-    ShortestJobNext sjn(0, 0, 0);
-    sjn.schedule(processes);
-    std::cout << "\nShortest Job Next Scheduling:\n";
-    calculateAvgTimes(processes);
+    for (auto& p : processes) p->waitingTime = p->turnaroundTime = 0;
+    ShortestJobNext sjnScheduler;
+    sjnScheduler.schedule(processes);
+    cout << "\nShortest Job Next Scheduling:\n";
+    Scheduler::calculateAvgTimes(processes);
 
-    // Cleaning up dynamically allocated memory
-    for (auto p : processes) {
-        delete p;
-    }
-
+    for (auto p : processes) delete p;
     return 0;
 }
